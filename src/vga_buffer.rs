@@ -1,4 +1,6 @@
 use core::fmt;
+use lazy_static::lazy_static;
+use spin::Mutex;
 use volatile::Volatile;
 
 #[allow(dead_code)] //allow unused code so compiler doesnt complain about each enum use
@@ -22,6 +24,32 @@ pub enum Color {
     Pink = 13,
     Yellow = 14,
     White = 15,
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => ($crate::vga_buffer::_print(format_args!($($arg)*)));
+}
+#[macro_export]
+macro_rules! println {
+    () => ($crate::print!("\n"));
+    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+}
+#[doc(hidden)]
+pub fn _print(args: fmt::Arguments) {
+    use core::fmt::Write;
+    WRITER.lock().write_fmt(args).unwrap();
+}
+
+lazy_static! {
+    pub static ref  WRITER: Mutex<Writer> = Mutex::new(Writer { //mutex adds safe interiour mutability to
+        //the writer static by using spin-lock based access
+        //create a static WIRTER to make a global writer without
+        //carrying a wirter instance around
+        column_position: 0,
+        color_code: ColorCode::new(Color::LightCyan, Color::Black),
+        buffer: unsafe { &mut *(0xb8000 as *mut Buffer) },
+    });
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -85,6 +113,16 @@ impl Writer {
         }
     }
 
+    fn clear_row(&mut self, row: usize) {
+        let blank = ScreenChar {
+            ascii_character: b' ',
+            color_code: self.color_code,
+        };
+        for col in 0..row {
+            self.buffer.chars[row][col].write(blank);
+        }
+    }
+
     pub fn write_string(&mut self, s: &str) {
         for byte in s.bytes() {
             match byte {
@@ -96,7 +134,17 @@ impl Writer {
     }
 
     fn new_line(&mut self) {
-        return;
+        //iterate and re write everything one line above to make space for the
+        //new line, like a typewriter would it pushes everything up one and only writes in the same
+        //line (we do not move the writer we move all the text)
+        for row in 1..BUFFER_HEIGHT {
+            for col in 0..BUFFER_WIDTH {
+                let character = self.buffer.chars[row][col].read();
+                self.buffer.chars[row - 1][col].write(character);
+            }
+        }
+        self.clear_row(BUFFER_HEIGHT - 1);
+        self.column_position = 0;
     }
 }
 
@@ -108,19 +156,4 @@ impl fmt::Write for Writer {
         self.write_string(s);
         Ok(())
     }
-}
-
-pub fn print_someting() {
-    use core::fmt::Write;
-    let mut writer = Writer {
-        column_position: 0,
-        color_code: ColorCode::new(Color::Brown, Color::Black),
-        buffer: unsafe { &mut *(0xb8000 as *mut Buffer) }, //cast direction as raw pointer then
-                                                           //convert it to a mutable reference by dereferencing it (*) and then borrowing it again
-                                                           //with &mut requieres unsafe since the raw pointer cannot be assured is valid
-    };
-
-    writer.write_byte(b'H');
-    writer.write_string("eelo ");
-    write!(writer, "The numbers are {} and {}", 42, 1.0 / 3.0).unwrap();
 }
