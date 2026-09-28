@@ -1,3 +1,6 @@
+use core::fmt;
+use volatile::Volatile;
+
 #[allow(dead_code)] //allow unused code so compiler doesnt complain about each enum use
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] //make it printable and comparable
 #[repr(u8)] //represents in the component under
@@ -45,7 +48,9 @@ const BUFFER_WIDTH: usize = 80;
 
 #[repr(transparent)]
 struct Buffer {
-    chars: [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],
+    chars: [[Volatile<ScreenChar>; BUFFER_WIDTH]; BUFFER_HEIGHT], //Volatile makes it so that the
+                                                                  //compiler doesnt overoptimize and delete the writes as we dont ever read from memory in vga
+                                                                  //buffer only write, it also makes it so that we can only access it by a .write method
 }
 
 pub struct Writer {
@@ -70,10 +75,11 @@ impl Writer {
 
                 let color_code = self.color_code;
 
-                self.buffer.chars[row][col] = ScreenChar {
+                self.buffer.chars[row][col].write(ScreenChar {
+                    //this assures us the compiler wont ever optimize away the write
                     ascii_character: byte,
                     color_code,
-                };
+                });
                 self.column_position += 1;
             }
         }
@@ -93,7 +99,19 @@ impl Writer {
         return;
     }
 }
+
+//this enables support for rusts write macros on our custo writer
+impl fmt::Write for Writer {
+    //this is the only required method for the
+    //Wirte implementation
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.write_string(s);
+        Ok(())
+    }
+}
+
 pub fn print_someting() {
+    use core::fmt::Write;
     let mut writer = Writer {
         column_position: 0,
         color_code: ColorCode::new(Color::Brown, Color::Black),
@@ -104,5 +122,5 @@ pub fn print_someting() {
 
     writer.write_byte(b'H');
     writer.write_string("eelo ");
-    writer.write_string("Wörld");
+    write!(writer, "The numbers are {} and {}", 42, 1.0 / 3.0).unwrap();
 }
